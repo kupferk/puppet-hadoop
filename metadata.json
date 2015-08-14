@@ -1,45 +1,65 @@
 {
   "name": "cesnet-hadoop",
-  "version": "0.9.6",
+  "version": "2.0.2",
   "author": "Frantisek Dvorak <valtri@civ.zcu.cz>",
   "summary": "Hadoop Cluster with security",
   "license": "MIT",
   "source": "https://github.com/MetaCenterCloudPuppet/cesnet-hadoop",
   "project_page": "https://github.com/MetaCenterCloudPuppet",
   "issues_url": "https://github.com/MetaCenterCloudPuppet/cesnet-hadoop/issues",
-  "tags": ["hadoop"],
+  "tags": [
+    "hadoop"
+  ],
   "operatingsystem_support": [
     {
-    "operatingsystem": "Debian",
-    "operatingsystemrelease": ["7"]
+      "operatingsystem": "CentOS",
+      "operatingsystemrelease": ["6"]
     },
     {
-    "operatingsystem": "Ubuntu",
-    "operatingsystemrelease": ["14.04"]
+      "operatingsystem": "Debian",
+      "operatingsystemrelease": [
+        "7"
+      ]
     },
     {
-    "operatingsystem": "Fedora",
-    "operatingsystemrelease": ["21"]
+      "operatingsystem": "Fedora",
+      "operatingsystemrelease": [
+        "21"
+      ]
+    },
+    {
+      "operatingsystem": "RedHat",
+      "operatingsystemrelease": ["6"]
+    },
+    {
+      "operatingsystem": "Scientific",
+      "operatingsystemrelease": ["6"]
+    },
+    {
+      "operatingsystem": "Ubuntu",
+      "operatingsystemrelease": [
+        "14.04"
+      ]
     }
   ],
   "requirements": [
     {
       "name": "pe",
-      "version_requirement": "3.x"
+      "version_requirement": ">= 3.4.0"
     },
     {
       "name": "puppet",
-      "version_requirement": "3.x"
+      "version_requirement": ">= 3.4.0"
     }
   ],
   "dependencies": [
     {
       "name": "puppetlabs/stdlib",
-      "version_requirement": ">= 1.0.0"
+      "version_requirement": ">= 1.0.0 <5.0.0"
     },
     {
       "name": "adrien/alternatives",
-      "version_requirement": ">= 0.3.0"
+      "version_requirement": ">= 0.3.0 <1.0.0"
     }
   ]
 }

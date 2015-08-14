@@ -7,10 +7,10 @@
 # [*(title)*]
 #   The name of the directory is in the title of the resource instance.
 #
+# [*touchfile*] (required)
 # [*owner*] = undef
 # [*group*] = undef
 # [*mode*] = undef
-# [*touchfile*] (required)
 #
 # === Requirement
 #
@@ -18,7 +18,7 @@
 # * configured local HDFS client
 # * User['hdfs']
 #
-define hadoop::mkdir($owner = undef, $group = undef, $mode = undef, $touchfile, $recursive = false) {
+define hadoop::mkdir($touchfile, $owner = undef, $group = undef, $mode = undef, $recursive = false) {
   include hadoop::common::hdfs::config
 
   $dir = $title
@@ -28,40 +28,44 @@ define hadoop::mkdir($owner = undef, $group = undef, $mode = undef, $touchfile, 
 
   if ($recursive) {
     $chown_args=' -R'
+  } else {
+    $chown_args=''
   }
 
-  # directory
-  exec { "hadoop-dir:${dir}":
-    command     => "hdfs dfs -mkdir -p ${dir}",
-    path        => $path,
-    environment => $env,
-    unless      => "hdfs dfs -test -d ${dir}",
-    user        => 'hdfs',
-    creates     => $puppetfile,
-    require     => File['hdfs-site.xml'],
-  }
-
-  # ownership
-  if $owner or $group {
-    exec { "hadoop-chown:${dir}":
-      command     => "hdfs dfs -chown${chown_args} ${owner}:${group} ${dir}",
+  if $hadoop::zookeeper_deployed {
+    # directory
+    exec { "hadoop-dir:${dir}":
+      command     => "hdfs dfs -mkdir -p ${dir}",
       path        => $path,
       environment => $env,
+      unless      => "hdfs dfs -test -d ${dir}",
       user        => 'hdfs',
       creates     => $puppetfile,
+      require     => File['hdfs-site.xml'],
     }
-    Exec["hadoop-dir:${dir}"] -> Exec["hadoop-chown:${dir}"]
-  }
 
-  # mode
-  if $mode {
-    exec { "hadoop-chmod:${dir}":
-      command     => "hdfs dfs -chmod ${mode} ${dir}",
-      path        => $path,
-      environment => $env,
-      user        => 'hdfs',
-      creates     => $puppetfile,
+    # ownership
+    if $owner and $owner != '' or $group and $group != '' {
+      exec { "hadoop-chown:${dir}":
+        command     => "hdfs dfs -chown${chown_args} ${owner}:${group} ${dir}",
+        path        => $path,
+        environment => $env,
+        user        => 'hdfs',
+        creates     => $puppetfile,
+      }
+      Exec["hadoop-dir:${dir}"] -> Exec["hadoop-chown:${dir}"]
     }
-    Exec["hadoop-dir:${dir}"] -> Exec["hadoop-chmod:${dir}"]
+
+    # mode
+    if $mode and $mode != '' {
+      exec { "hadoop-chmod:${dir}":
+        command     => "hdfs dfs -chmod ${mode} ${dir}",
+        path        => $path,
+        environment => $env,
+        user        => 'hdfs',
+        creates     => $puppetfile,
+      }
+      Exec["hadoop-dir:${dir}"] -> Exec["hadoop-chmod:${dir}"]
+    }
   }
 }

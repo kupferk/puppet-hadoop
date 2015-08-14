@@ -4,8 +4,8 @@
 # It sets variables according to platform
 #
 class hadoop::params {
-  case "${::osfamily}/${::operatingsystem}" {
-    'RedHat/Fedora', 'RedHat/CentOS', 'RedHat/RedHat', 'RedHat/Scientific': {
+  case "${::osfamily}-${::operatingsystem}" {
+    /RedHat-Fedora/: {
       $packages_common = [ 'hadoop-common', 'hadoop-common-native' ]
       $packages_nn = [ 'hadoop-hdfs' ]
       $packages_rm = [ 'hadoop-yarn' ]
@@ -34,26 +34,12 @@ class hadoop::params {
         'hdfs-zkfc' => '/etc/sysconfig/hadoop-zkfc',
       }
 
-      $alternatives = undef
       $confdir = '/etc/hadoop'
       # container group, official recommendation is 'hadoop'
       # depends on result of: https://bugzilla.redhat.com/show_bug.cgi?id=1163892
       $yarn_group = 'hadoop'
-
-      # other properties added in init.pp
-      $properties = {
-        'yarn.nodemanager.local-dirs' => '/var/cache/hadoop-yarn/${user.name}/nm-local-dir',
-        'yarn.application.classpath' => '
-        $HADOOP_CONF_DIR,$HADOOP_COMMON_HOME/$HADOOP_COMMON_DIR/*,
-        $HADOOP_COMMON_HOME/$HADOOP_COMMON_LIB_JARS_DIR/*,
-        $HADOOP_HDFS_HOME/$HDFS_DIR/*,$HADOOP_HDFS_HOME/$HDFS_LIB_JARS_DIR/*,
-        $HADOOP_MAPRED_HOME/$MAPRED_DIR/*,
-        $HADOOP_MAPRED_HOME/$MAPRED_LIB_JARS_DIR/*,
-        $HADOOP_YARN_HOME/$YARN_DIR/*,$HADOOP_YARN_HOME/$YARN_LIB_JARS_DIR/*
-',
-      }
     }
-    'Debian/Debian', 'Debian/Ubuntu': {
+    /Debian|RedHat/: {
       $packages_common = [ ]
       $packages_nn = [ 'hadoop-hdfs-namenode' ]
       $packages_rm = [ 'hadoop-yarn-resourcemanager' ]
@@ -82,31 +68,25 @@ class hadoop::params {
         'hdfs-zkfc' => '/etc/default/hadoop-hdfs-zkfc',
       }
 
-      $alternatives = 'cluster'
       $confdir = '/etc/hadoop/conf'
       # container group
       $yarn_group = 'yarn'
-
-      # other properties added in init.pp
-      $properties = {
-        'yarn.nodemanager.local-dirs' => '/var/lib/hadoop-yarn/cache/${user.name}/nm-local-dir',
-        'yarn.application.classpath' => '
-        $HADOOP_CONF_DIR,
-        $HADOOP_COMMON_HOME/*,$HADOOP_COMMON_HOME/lib/*,
-        $HADOOP_HDFS_HOME/*,$HADOOP_HDFS_HOME/lib/*,
-        $HADOOP_MAPRED_HOME/*,$HADOOP_MAPRED_HOME/lib/*,
-        $HADOOP_YARN_HOME/*,$HADOOP_YARN_HOME/lib/*
-',
-      }
     }
     default: {
       fail("${::osfamily} (${::operatingsystem}) not supported")
     }
   }
 
-  $hdfs_hostname = 'localhost'
-  $yarn_hostname = 'localhost'
-  $slaves = [ 'localhost' ]
+  $alternatives = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => undef,
+    # https://github.com/puppet-community/puppet-alternatives/issues/18
+    /RedHat/        => '',
+    /Debian/        => 'cluster',
+  }
+
+  $hdfs_hostname = $::fqdn
+  $yarn_hostname = $::fqdn
+  $slaves = [ $::fqdn ]
 
   $cluster_name = 'cluster'
 
@@ -121,6 +101,8 @@ class hadoop::params {
     'dfs.datanode.address' => 'different port with security enabled (original port 50010)',
     'dfs.datanode.http.address' => 'different port with security enabled (original port 50075)',
     'dfs.webhdfs.enabled' => 'read-only Web HDFS access',
+    'mapreduce.map.output.compress' => 'compression of intermediate files',
+    'mapreduce.map.output.compress.codec' => 'compression codec of intermediate files',
     'mapreduce.task.tmp.dir' => 'temporary directory for map and reduce tasks',
     'mapreduce.tasktracker.outofband.heartbeat' => 'let the TaskTracker send an out-of-band heartbeat on task completion to reduce latency',
     'yarn.nodemanager.local-dirs' => 'List of directories to store localized files in.',
@@ -141,43 +123,87 @@ class hadoop::params {
   $https_keystore_password = 'changeit'
   $https_keystore_keypassword = undef
 
-  $hdfs_dir = $::osfamily ? {
-    'Debian' => '/var/lib/hadoop-hdfs/cache',
-    'RedHat' => '/var/lib/hadoop-hdfs',
+  $hdfs_dir = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/var/lib/hadoop-hdfs',
+    /Debian|RedHat/ => '/var/lib/hadoop-hdfs/cache',
   }
   $hdfs_name_dirs = [ $hdfs_dir ]
   $hdfs_data_dirs = [ $hdfs_dir ]
   # just cosmetics, daemons will create these directories automatically anyway
-  $hdfs_namenode_suffix = $::osfamily ? {
-    'RedHat' => '/${user.name}/dfs/namenode',
-    'Debian' => '/${user.name}/dfs/name',
+  $hdfs_namenode_suffix = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/${user.name}/dfs/namenode',
+    /Debian|RedHat/ => '/${user.name}/dfs/name',
   }
-  $hdfs_secondarynamenode_suffix = $::osfamily ? {
-    'RedHat' => '/${user.name}/dfs/secondarynamenode',
-    'Debian' => '/${user.name}/dfs/secondaryname',
+  $hdfs_secondarynamenode_suffix = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/${user.name}/dfs/secondarynamenode',
+    /Debian|RedHat/ => '/${user.name}/dfs/secondaryname',
   }
-  $hdfs_datanode_suffix = $::osfamily ? {
-    'RedHat' => '/${user.name}/dfs/datanode',
-    'Debian' => '/${user.name}/dfs/data',
+  $hdfs_datanode_suffix = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/${user.name}/dfs/datanode',
+    /Debian|RedHat/ => '/${user.name}/dfs/data',
   }
-  $hdfs_journalnode_suffix = $::osfamily ? {
-    'RedHat' => '/${user.name}/dfs/journalnode',
-    'Debian' => '/${user.name}/dfs/journal',
+  $hdfs_journalnode_suffix = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/${user.name}/dfs/journalnode',
+    /Debian|RedHat/ => '/${user.name}/dfs/journal',
   }
-  $hdfs_homedir = $::osfamily ? {
-    'Debian' => '/var/lib/hadoop-hdfs',
-    'RedHat' => '/var/lib/hadoop-hdfs',
+  $hdfs_homedir = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/var/lib/hadoop-hdfs',
+    /Debian|RedHat/ => '/var/lib/hadoop-hdfs',
   }
-  $yarn_homedir = $::osfamily ? {
-    'Debian' => '/var/lib/hadoop-yarn',
-    'RedHat' => '/var/cache/hadoop-yarn',
+  $yarn_homedir = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/var/cache/hadoop-yarn',
+    /Debian|RedHat/ => '/var/lib/hadoop-yarn',
   }
-  $mapred_homedir = $::osfamily ? {
-    'Debian' => '/var/lib/hadoop-mapreduce',
-    'RedHat' => '/var/cache/hadoop-mapreduce',
+  $mapred_homedir = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/var/cache/hadoop-mapreduce',
+    /Debian|RedHat/ => '/var/lib/hadoop-mapreduce',
   }
+  $default_uid_min = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => 1000,
+    /RedHat/        => 500,
+    default         => 1000,
+  }
+  if $::uid_min {
+    $uid_min = $::uid_min
+  } else {
+    $uid_min = $default_uid_min
+  }
+
+  # other properties added to init.pp
+  case "${::osfamily}-${::operatingsystem}" {
+    /RedHat-Fedora/: {
+      $properties = {
+        'yarn.nodemanager.local-dirs' => "${yarn_homedir}/\${user.name}/nm-local-dir",
+        'yarn.application.classpath' => '
+        $HADOOP_CONF_DIR,$HADOOP_COMMON_HOME/$HADOOP_COMMON_DIR/*,
+        $HADOOP_COMMON_HOME/$HADOOP_COMMON_LIB_JARS_DIR/*,
+        $HADOOP_HDFS_HOME/$HDFS_DIR/*,$HADOOP_HDFS_HOME/$HDFS_LIB_JARS_DIR/*,
+        $HADOOP_MAPRED_HOME/$MAPRED_DIR/*,
+        $HADOOP_MAPRED_HOME/$MAPRED_LIB_JARS_DIR/*,
+        $HADOOP_YARN_HOME/$YARN_DIR/*,$HADOOP_YARN_HOME/$YARN_LIB_JARS_DIR/*
+',
+      }
+    }
+    /Debian|RedHat/: {
+      $properties = {
+        'yarn.nodemanager.local-dirs' => "${yarn_homedir}/cache/\${user.name}/nm-local-dir",
+        'yarn.application.classpath' => '
+        $HADOOP_CONF_DIR,
+        $HADOOP_COMMON_HOME/*,$HADOOP_COMMON_HOME/lib/*,
+        $HADOOP_HDFS_HOME/*,$HADOOP_HDFS_HOME/lib/*,
+        $HADOOP_MAPRED_HOME/*,$HADOOP_MAPRED_HOME/lib/*,
+        $HADOOP_YARN_HOME/*,$HADOOP_YARN_HOME/lib/*
+',
+      }
+    }
+    default: {
+      fail("${::osfamily} (${::operatingsystem}) not supported")
+    }
+  }
+
   $perform = false
   $hdfs_deployed = true
+  $zookeeper_deployed = true
 
   $https_keytab = '/etc/security/keytab/http.service.keytab'
   $keytab_namenode = '/etc/security/keytab/nn.service.keytab'

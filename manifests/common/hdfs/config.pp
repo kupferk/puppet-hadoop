@@ -30,6 +30,34 @@ class hadoop::common::hdfs::config {
     require => [ Exec['touch-excludes'], File[$file_slaves] ],
   }
 
+  if $hadoop::ha_credentials {
+    file { "${hadoop::confdir}/zk-auth.txt":
+      owner   => 'hdfs',
+      group   => 'hdfs',
+      mode    => '0600',
+      alias   => 'zk-auth.txt',
+      content => template('hadoop/hadoop/zk-auth.txt.erb'),
+    }
+  } else {
+    file { "${hadoop::confdir}/zk-auth.txt":
+      ensure => absent,
+    }
+  }
+
+  if $hadoop::ha_digest {
+    file { "${hadoop::confdir}/zk-acl.txt":
+      owner   => 'hdfs',
+      group   => 'hdfs',
+      mode    => '0600',
+      alias   => 'zk-acl.txt',
+      content => template('hadoop/hadoop/zk-acl.txt.erb'),
+    }
+  } else {
+    file { "${hadoop::confdir}/zk-acl.txt":
+      ensure => absent,
+    }
+  }
+
   # mapred user is required on name node,
   # it is created by hadoop-yarn package too, but we don't need yarn package with
   # all dependencies just for creating this user
@@ -37,8 +65,8 @@ class hadoop::common::hdfs::config {
     ensure => present,
     system => true,
   }
-  case $::osfamily {
-    'RedHat': {
+  case "${::osfamily}-${::operatingsystem}" {
+    /RedHat-Fedora/: {
       user { 'mapred':
         ensure     => present,
         comment    => 'Apache Hadoop MapReduce',
@@ -52,7 +80,7 @@ class hadoop::common::hdfs::config {
         require    => [Group['mapred']]
       }
     }
-    'Debian': {
+    /Debian|RedHat/: {
       user { 'mapred':
         ensure     => present,
         comment    => 'Hadoop MapReduce',
@@ -78,11 +106,11 @@ class hadoop::common::hdfs::config {
   # org.apache.hadoop.yarn.server.resourcemanager.recovery.FileSystemRMStateStore
   # ignores hadoop.security.auth_to_local
   #
-  $rm_shell = $::osfamily ? {
-    'RedHat' => '/sbin/nologin',
-    'Debian' => '/bin/false',
+  $rm_shell = "${::osfamily}-${::operatingsystem}" ? {
+    /RedHat-Fedora/ => '/sbin/nologin',
+    /Debian|RedHat/ => '/bin/false',
   }
-  if ($hadoop::realm) {
+  if $hadoop::realm and $hadoop::realm != '' {
     user { 'rm':
       ensure     => present,
       comment    => 'Apache Hadoop Yarn',

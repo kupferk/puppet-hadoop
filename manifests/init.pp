@@ -4,13 +4,13 @@
 #
 # === Parameters
 #
-# ####`hdfs_hostname` 'localhost'
+# ####`hdfs_hostname` $::fqdn
 #
 # Hadoop Filesystem Name Node machine.
 #
-# ####`hdfs_hostname2` 'localhost'
+# ####`hdfs_hostname2` undef
 #
-# Another Hadoop Filesystem Name Node machine. used for High Availability. This parameter will activate the HDFS HA feature. See [http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html](http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html).
+# Another Hadoop Filesystem Name Node machine. Used for High Availability. This parameter will activate the HDFS HA feature. See [http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html](http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html).
 #
 # If you're converting existing Hadoop cluster without HA to cluster with HA, you need to initialize journalnodes yet:
 #
@@ -18,17 +18,19 @@
 #
 # Zookeepers are required for automatic transitions.
 #
-# ####`yarn_hostname` 'localhost'
+# If Hadoop cluster is secured, it is recommended also secure Zookeeper. See *ha_credentials* and *ha_digest* parameters.
+#
+# ####`yarn_hostname` $::fqdn
 #
 # Yarn machine (with Resource Manager and Job History services).
 #
-# ####`yarn_hostname2` 'localhost'
+# ####`yarn_hostname2` undef
 #
 # YARN resourcemanager second hostname for High Availability. This parameter will activate the YARN HA feature. See [http://hadoop.apache.org/docs/stable/hadoop-yarn/hadoop-yarn-site/ResourceManagerHA.html](http://hadoop.apache.org/docs/stable/hadoop-yarn/hadoop-yarn-site/ResourceManagerHA.html).
 #
 # Zookeepers are required.
 #
-# ####`slaves` 'localhost'
+# ####`slaves` [$::fqdn]
 #
 # Array of slave node hostnames.
 #
@@ -77,6 +79,18 @@
 #
 # Without zookeepers the manual failover is needed: the namenodes are always started in standby mode and one would need to be activated manually.
 #
+# ####`ha_credentials` undef
+#
+# With enabled high availability of HDFS in secured cluster it is recommended to secure also zookeeper. The value is in the form *USER:PASSWORD*.
+#
+# Set this to something like: **hdfs-zkfcs:PASSWORD**.
+#
+# ####`ha_digest` undef
+#
+# Digest version of *ha_credentials*. You can generate it this way:
+#
+#      java -cp $ZK_HOME/lib/*:$ZK_HOME/zookeeper-*.jar org.apache.zookeeper.server.auth.DigestAuthenticationProvider hdfs-zkfcs:PASSWORD
+#
 # ####`hdfs_name_dirs` (["/var/lib/hadoop-hdfs"], or ["/var/lib/hadoop-hdfs/cache"])
 #
 # Directory prefixes to store the metadata on the namenode.
@@ -113,13 +127,11 @@
 #
 # Descriptions for the properties. Just for cuteness.
 #
-# ####`environments` undef
+# ####`environment` undef
 #
-# Environment to set for all Hadoop daemons. Recommended is to increase java heap memory, if enough memory is available:
+# Environment to set for all Hadoop daemons.
 #
-#     environments => ['export HADOOP\_HEAPSIZE=4096', 'export YARN\_HEAPSIZE=4096']
-#
-# Note: whether to use 'export' or not is system dependent (Debian 7/wheezy: yes, systemd-based distributions: no).
+#     environment => {'HADOOP_HEAPSIZE' => 4096, 'YARN_HEAPSIZE' => 4096}
 #
 # ####`features` (empty)
 #
@@ -136,6 +148,13 @@
 # * **aggregation**: enable YARN log aggregation (recommended, YARN will depend on HDFS)
 #
 # Recommended features to enable are: **rmstore**, **aggregation** and probably **multihome**.
+#
+# ####`compress_enable` true
+#
+# Enable compression of intermediate files by snappy codec. This will set following properties:
+#
+# * *mapred.compress.map.output*: true
+# * *mapred.map.output.compression.codec*: "org.apache.hadoop.io.compress.SnappyCodec"
 #
 # ####`acl` undef
 #
@@ -210,7 +229,7 @@
 #
 #     authorization => {
 #       'rules' => 'limit',
-#       'security.service.authorization.default.acl' => ' hadoop,hbase,hive,users',
+#       'security.service.authorization.default.acl' => ' hadoop,hbase,hive,spark,users',
 #     }
 #
 # Note: Beware *...acl.blocked* are not used if the *....acl* counterpart is defined.
@@ -253,13 +272,21 @@
 #
 # Keytab file for HTTPS. It will be copied for each daemon user and according permissions and properties set.
 #
+# ####`min_uid` (autodetect)
+#
+# Minimal permitted UID of Hadoop users. Used in Linux containers, when security is enabled.
+#
 # ####`perform` false
 #
 # Launch all installation and setup here, from hadoop class.
 #
 # ####`hdfs_deployed` true
 #
-# Perform also actions requiring working HDFS (namenode + enough datanodes): enabling RM HDFS state-store feature, and starting MapReduce History Server. This action requires running namenode and datanodes, so you can set this to *false* during initial installation.
+# Perform also actions requiring working HDFS (namenode + enough datanodes): enabling RM HDFS state-store feature (if enabled), and starting MapReduce History Server. This action requires running namenode and datanodes, so you can set this to *false* during initial installation.
+#
+# ####`zookeeper_deployed` true
+#
+# Perform also actions requiring working zookeeper and journal nodes: when enabled, launch ZKFC daemons and secondary namenode. You can set this to *false* during initial installation when High Availability is enabled.
 #
 # ####`keytab_namenode` '/etc/security/keytab/nn.service.keytab'
 #
@@ -352,14 +379,17 @@ class hadoop (
   $journalnode_hostnames = undef,
   $zookeeper_hostnames = undef,
 
+  $ha_credentials = undef,
+  $ha_digest = undef,
   $hdfs_name_dirs = $params::hdfs_name_dirs,
   $hdfs_data_dirs = $params::hdfs_data_dirs,
   $hdfs_secondary_dirs = undef,
   $hdfs_journal_dirs = undef,
   $properties = undef,
   $descriptions = undef,
-  $environments = undef,
+  $environment = undef,
   $features = $params::features,
+  $compress_enable = true,
   $acl = undef,
   $alternatives = $params::alternatives,
   $authorization = undef,
@@ -370,8 +400,11 @@ class hadoop (
   $https_keystore_password = $params::https_keystore_password,
   $https_keytab = $params::https_keytab,
   $https_keystore_keypassword = $params::https_keystore_keypassword,
+  $min_uid = $params::uid_min,
   $perform = $params::perform,
+
   $hdfs_deployed = $params::hdfs_deployed,
+  $zookeeper_deployed = $params::zookeeper_deployed,
 
   $keytab_namenode = $params::keytab_namenode,
   $keytab_datanode = $params::keytab_datanode,
@@ -398,36 +431,53 @@ class hadoop (
   if !$hdfs_journal_dirs { $_hdfs_journal_dirs = $hadoop::hdfs_name_dirs }
 
   if $::fqdn == $hdfs_hostname or $::fqdn == $hdfs_hostname2 {
-    $daemon_namenode = 1
-    $mapred_user = 1
+    $daemon_namenode = true
+    $mapred_user = true
+  } else {
+    $daemon_namenode = false
+    $mapred_user = false
   }
 
   if $::fqdn == $yarn_hostname or $::fqdn == $yarn_hostname2{
-    $daemon_resourcemanager = 1
+    $daemon_resourcemanager = true
+  } else {
+    $daemon_resourcemanager = false
   }
 
   if $::fqdn == $hs_hostname {
-    $daemon_historyserver = 1
+    $daemon_historyserver = true
+  } else {
+    $daemon_historyserver = false
   }
 
   if member($_nodemanager_hostnames, $::fqdn) {
-    $daemon_nodemanager = 1
+    $daemon_nodemanager = true
+  } else {
+    $daemon_nodemanager = false
   }
 
   if member($_datanode_hostnames, $::fqdn) {
-    $daemon_datanode = 1
+    $daemon_datanode = true
+  } else {
+    $daemon_datanode = false
   }
 
   if $journalnode_hostnames and member($journalnode_hostnames, $::fqdn) {
-    $daemon_journalnode = 1
+    $daemon_journalnode = true
+  } else {
+    $daemon_journalnode = false
   }
 
   if $zookeeper_hostnames and $daemon_namenode {
-    $daemon_hdfs_zkfc = 1
+    $daemon_hdfs_zkfc = true
+  } else {
+    $daemon_hdfs_zkfc = false
   }
 
   if member($frontend_hostnames, $::fqdn) {
-    $frontend = 1
+    $frontend = true
+  } else {
+    $frontend = false
   }
 
   if $zookeeper_hostnames {
@@ -460,10 +510,11 @@ class hadoop (
     'mapreduce.jobhistory.webapps.address' => "${hs_hostname}:19888",
     'mapreduce.task.tmp.dir' => '/var/cache/hadoop-mapreduce/${user.name}/tasks',
   }
-  if ($hadoop::realm) {
+  if $hadoop::realm and $hadoop::realm != '' {
     $sec_properties = {
       'hadoop.security.authentication' => 'kerberos',
       'hadoop.rcp.protection' => 'integrity',
+      # update also "Auth to local mapping" chapter
       'hadoop.security.auth_to_local' => "
 RULE:[2:\$1;\$2@\$0](^jhs;.*@${realm}$)s/^.*$/mapred/
 RULE:[2:\$1;\$2@\$0](^[ndjs]n;.*@${realm}$)s/^.*$/hdfs/
@@ -471,6 +522,7 @@ RULE:[2:\$1;\$2@\$0](^[rn]m;.*@${realm}$)s/^.*$/yarn/
 RULE:[2:\$1;\$2@\$0](^hbase;.*@${realm}$)s/^.*$/hbase/
 RULE:[2:\$1;\$2@\$0](^hive;.*@${realm}$)s/^.*$/hive/
 RULE:[2:\$1;\$2@\$0](^hue;.*@${realm}$)s/^.*$/hue/
+RULE:[2:\$1;\$2@\$0](^spark;.*@${realm}$)s/^.*$/spark/
 RULE:[2:\$1;\$2@\$0](^tomcat;.*@${realm}$)s/^.*$/tomcat/
 RULE:[2:\$1;\$2@\$0](^zookeeper;.*@${realm}$)s/^.*$/zookeeper/
 RULE:[2:\$1;\$2@\$0](^HTTP;.*@${realm}$)s/^.*$/HTTP/
@@ -500,6 +552,8 @@ DEFAULT
       'yarn.nodemanager.container-executor.class' => 'org.apache.hadoop.yarn.server.nodemanager.LinuxContainerExecutor',
       'yarn.nodemanager.linux-container-executor.group' => 'hadoop',
     }
+  } else {
+    $sec_properties = undef
   }
   if $hadoop::authorization {
     $auth_properties = {
@@ -529,7 +583,11 @@ DEFAULT
         'yarn.resourcemanager.recovery.enabled' => true,
         'yarn.resourcemanager.store.class' => 'org.apache.hadoop.yarn.server.resourcemanager.recovery.ZKRMStateStore',
       }
+    } else {
+        $rm_ss_properties = undef
     }
+  } else {
+    $rm_ss_properties = undef
   }
 
   if $hadoop::features['multihome'] {
@@ -538,6 +596,8 @@ DEFAULT
       'yarn.resourcemanager.bind-host' => '0.0.0.0',
       'dfs.namenode.rpc-bind-host' => '0.0.0.0',
     }
+  } else {
+    $mh_properties = undef
   }
 
   if $hadoop::features['aggregation'] {
@@ -545,10 +605,21 @@ DEFAULT
       'yarn.log-aggregation-enable' => true,
       'yarn.nodemanager.remote-app-log-dir' => '/var/log/hadoop-yarn/apps',
     }
+  } else {
+    $agg_properties = undef
+  }
+
+  if $hadoop::compress_enable {
+    $compress_properties = {
+      'mapreduce.map.output.compress' => true,
+      'mapreduce.map.output.compress.codec' => 'org.apache.hadoop.io.compress.SnappyCodec',
+    }
+  } else {
+    $compress_properties = undef
   }
 
   if $hadoop::https {
-    if !$hadoop::realm {
+    if !$hadoop::realm or $hadoop::realm == '' {
       err('Kerberos feature required for https support.')
     }
     $https_properties = {
@@ -557,7 +628,7 @@ DEFAULT
       'hadoop.http.authentication.token.validity' => '36000',
       'hadoop.http.authentication.signature.secret.file' => '${user.home}/http-auth-signature-secret',
       'hadoop.http.authentication.cookie.domain' => downcase($hadoop::realm),
-      'hadoop.http.authentication.simple.anonymous.allowed' => 'false',
+      'hadoop.http.authentication.simple.anonymous.allowed' => false,
       'hadoop.http.authentication.kerberos.principal' => "HTTP/_HOST@${hadoop::realm}",
       'hadoop.http.authentication.kerberos.keytab' => '${user.home}/hadoop.keytab',
       'dfs.http.policy' => 'HTTPS_ONLY',
@@ -572,6 +643,11 @@ DEFAULT
 
   # High Availability of HDFS
   if $hdfs_hostname2 {
+    if !$hadoop::realm or $hadoop::realm == '' {
+      if !$hadoop::ha_credentials or !$hadoop::ha_digest {
+        warning('ha_credentials and ha_digest parameters are recommended in secured HA cluster')
+      }
+    }
     if ! $journalnode_hostnames {
       notice('only QJM HA implemented, journalnodes required for HDFS HA')
     }
@@ -595,7 +671,18 @@ DEFAULT
       'fs.defaultFS' => "hdfs://${hadoop::cluster_name}",
     }
 
-    $ha_hdfs_properties = merge($ha_base_properties, $ha_https_properties)
+    if $hadoop::ha_credentials and $hadoop::ha_diest {
+      $ha_credentials_properties = {
+        'ha.zookeeper.auth' => "@${hadoop::confdir}/zk-auth.txt",
+        'ha.zookeeper.acl' => "@${hadoop::confdir}/zk-acl.txt",
+      }
+    } else {
+      $ha_credentials_properties = undef
+    }
+
+    $ha_hdfs_properties = merge($ha_base_properties, $ha_https_properties, $ha_credentials_properties)
+  } else {
+    $ha_hdfs_properties = undef
   }
 
   # High Availability of YARN
@@ -607,6 +694,8 @@ DEFAULT
       'yarn.resourcemanager.hostname.rm1' => $yarn_hostname,
       'yarn.resourcemanager.hostname.rm2' => $yarn_hostname2,
     }
+  } else {
+    $ha_yarn_properties = undef
   }
   $ha_properties = merge($ha_hdfs_properties, $ha_yarn_properties)
 
@@ -616,6 +705,8 @@ DEFAULT
       'dfs.ha.automatic-failover.enabled' => true,
       'ha.zookeeper.quorum' => $zkquorum,
     }
+  } else {
+    $zoo_hdfs_properties = undef
   }
 
   if $zookeeper_hostnames and ($yarn_hostname2 or $features['rmstore'] and $features['rmstore'] != 'hdfs') {
@@ -625,6 +716,8 @@ DEFAULT
       'yarn.resourcemanager.zk-acl' => 'world:anyone:rwcda',
       'yarn.resourcemanager.zk-address' => $zkquorum,
     }
+  } else {
+    $zoo_yarn_properties = undef
   }
   $zoo_properties = merge($zoo_hdfs_properties, $zoo_yarn_properties)
 
@@ -658,9 +751,11 @@ DEFAULT
         $preset_authorization = {}
       }
     }
+  } else {
+    $preset_authorization = {}
   }
 
-  $props = merge($params::properties, $dyn_properties, $sec_properties, $auth_properties, $rm_ss_properties, $mh_properties, $agg_properties, $https_properties, $ha_properties, $zoo_properties, $properties)
+  $props = merge($params::properties, $dyn_properties, $sec_properties, $auth_properties, $rm_ss_properties, $mh_properties, $agg_properties, $compress_properties, $https_properties, $ha_properties, $zoo_properties, $properties)
   $descs = merge($params::descriptions, $descriptions)
 
   $_authorization = merge($preset_authorization, delete($authorization, 'rules'))

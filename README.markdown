@@ -1,3 +1,7 @@
+##Hadoop
+
+[![Build Status](https://travis-ci.org/MetaCenterCloudPuppet/cesnet-hadoop.svg?branch=master)](https://travis-ci.org/MetaCenterCloudPuppet/cesnet-hadoop)
+
 ####Table of Contents
 
 1. [Overview](#overview)
@@ -8,8 +12,14 @@
     * [Beginning with hadoop](#beginning-with-hadoop)
 4. [Usage - Configuration options and additional functionality](#usage)
     * [Enable Security](#security)
+     * [Long running applications](#long-run)
+     * [Auth to local mapping](#auth_to_local)
     * [Enable HTTPS](#https)
     * [Multihome Support](#multihome)
+    * [High Availability](#ha)
+     * [Fresh installation](#ha-fresh)
+     * [Converting non-HA cluster](#ha-convert)
+    * [Upgrade](#upgrade)
 5. [Reference - An under-the-hood peek at what the module is doing and how](#reference)
     * [Classes](#classes)
     * [Resource Types](#resources)
@@ -20,7 +30,7 @@
 <a name="overview"></a>
 ##Overview
 
-Management of Hadoop Cluster with security based on Kerberos and with High Availability. Puppet 3.x is required. Supported and tested are Fedora (native Hadoop) and Debian (Cloudera distribution).
+Management of Hadoop Cluster with security based on Kerberos and with High Availability. Puppet 3.x is required. Supported and tested are Fedora (native Hadoop), Debian (Cloudera distribution), and CentOS (Cloudera distribution).
 
 <a name="module-description"></a>
 ##Module Description
@@ -30,12 +40,14 @@ This module installs and setups Hadoop Cluster, with all services collocated or 
 * Security based on Kerberos
 * HTTPS
 * High availability for HDFS Name Node and YARN Resource Manager (requires zookeeper)
+* YARN Resource Manager state-store
 
 Supported are:
 
-* Fedora 21: native packages (tested with Hadoop 2.4.1)
-* Debian 7/wheezy: Cloudera distribution (tested with Hadoop 2.5.0)
-* Ubuntu 14/trusty: Cloudera distribution (tested with Hadoop 2.5.0)
+* **Fedora 21**: native packages (tested with Hadoop 2.4.1)
+* **Debian 7/wheezy**: Cloudera distribution (tested with CDH 5.3.1/5.4.1, Hadoop 2.5.0/2.6.0)
+* **Ubuntu 14/trusty**: Cloudera distribution (tested with CDH 5.3.1, Hadoop 2.5.0)
+* **RHEL 6, CentOS 6, Scientific Linux 6**: Cloudera distribution (tested with CDH 5.4.1, Hadoop 2.6.0)
 
 There are some limitations how to use this module. You should read the documentation, especially the [Setup Requirements](#setup-requirements) section.
 
@@ -74,7 +86,7 @@ Be aware of:
 * **Hadoop repositories**
  * neither Cloudera nor Hortonworks repositories are configured in this module (for Cloudera you can find list and key files here: [http://archive.cloudera.com/cdh5/debian/wheezy/amd64/cdh/](http://archive.cloudera.com/cdh5/debian/wheezy/amd64/cdh/), Fedora has Hadoop as part of distribution, ...)
  * *java* is not installed by this module (*openjdk-7-jre-headless* is OK for Debian 7/wheezy)
- * for security the package providing kinit is also needed (Debian: *krb5-util*/*heimdal-clients*, Fedora: *krb5-workstation*)
+ * for security the package providing kinit is also needed (Debian: *krb5-util* or *heimdal-clients*, RedHat/Fedora: *krb5-workstation*)
 
 * **One-node Hadoop cluster** (may be collocated on one machine): Hadoop replicates by default all data to at least to 3 data nodes. For one-node Hadoop cluster use property *dfs.replication=1* in *properties* parameter
 
@@ -91,7 +103,7 @@ Be aware of:
  2) you need to enable ticket refresh and RM restarts (see *features* module parameter)
 
 * **HTTPS**:
- * prepare CA certificate keystore and machine certificate keystore in /etc/security/cacerts and /etc/security/server.keystore (location can be modified by *https\_cacerts* and *https\_keystore* parameters), see init.pp class for more https-related parameters
+ * prepare CA certificate keystore and machine certificate keystore in /etc/security/cacerts and /etc/security/server.keystore (location can be modified by *https\_cacerts* and *https\_keystore* parameters), see [Enable HTTPS](#https) section
  * prepare /etc/security/http-auth-signature-secret file (with any content)
 
    Note: some files are copied into ~hdfs, ~yarn/, and ~mapred/ directories
@@ -103,7 +115,7 @@ By default the main *hadoop* class do nothing but configuration of the hadoop pu
 
 Let's start with brief examples. Before beginning you should read the [Setup Requirements](#setup-requirements) section above.
 
-**Example 1**: The simplest setup is one-node Hadoop cluster without security, with everything on single machine:
+**Example**: The simplest setup is one-node Hadoop cluster without security, with everything on single machine:
 
     class{"hadoop":
       hdfs_hostname => $::fqdn,
@@ -142,7 +154,32 @@ Modify $::fqdn and node(s) section as needed. You can also remove the dfs.replic
 
 Multiple HDFS namespaces are not supported now (ask or send patches, if you need it :-)).
 
-**Example 2**: One-node Hadoop cluster with security (add also the node section from the single setup above):
+<a name="usage"></a>
+##Usage
+
+<a name="security"></a>
+###Enable Security
+
+Security in Hadoop is based on Kerberos. Keytab files needs to be prepared on the proper places before enabling the security.
+
+Following parameters are used for security (see also [Module Parameters](#parameters)):
+
+* *realm* (required parameter)<br />
+  Enable security and Kerberos realm to use. Empty string disables security.
+  To enable security, there are required:
+  * installed Kerberos client (Debian: krb5-user/heimdal-clients; RedHat: krb5-workstation)
+  * configured Kerberos client (/etc/krb5.conf, /etc/krb5.keytab)
+  * /etc/security/keytab/dn.service.keytab (on data nodes)
+  * /etc/security/keytab/jhs.service.keytab (on job history node)
+  * /etc/security/keytab/nm.service.keytab (on node manager nodes)
+  * /etc/security/keytab/nn.service.keytab (on name nodes)
+  * /etc/security/keytab/rm.service.keytab (on resource manager node)
+
+* *authorization* (empty hash by default)
+
+It is recommended also to enable HTTPS when security is enabled. See [Enable HTTPS](#https).
+
+**Example**: One-node Hadoop cluster with security (add also the node section from the single-node setup above):
 
     class{"hadoop":
       hdfs_hostname => $::fqdn,
@@ -171,48 +208,44 @@ Multiple HDFS namespaces are not supported now (ask or send patches, if you need
 
 Modify $::fqdn and add node sections as needed for multi-node cluster.
 
-TODO: high availability example and dependency on zookeeper
+<a name="long-run"></a>
+#### Long running applications
 
-<a name="usage"></a>
-##Usage
-
-TODO: Put the classes, types, and resources for customizing, configuring, and doing the fancy stuff with your module here.
-
-<a name="security"></a>
-###Enable Security
-
-Security in Hadoop is based on Kerberos. Keytab files needs to be prepared on the proper places before enabling the security.
-
-Following parameters are used for security (see also [Module Parameters](#parameters):
-
-* *realm* (required parameter, empty string disables security)<br />
-  Enable security and Kerberos realm to use. Empty string disables security.
-  To enable security, there are required:
-  * installed Kerberos client (Debian: krb5-user/heimdal-clients; RedHat: krb5-workstation)
-  * configured Kerberos client (/etc/krb5.conf, /etc/krb5.keytab)
-  * /etc/security/keytab/dn.service.keytab (on data nodes)
-  * /etc/security/keytab/jhs.service.keytab (on job history node)
-  * /etc/security/keytab/nm.service.keytab (on node manager nodes)
-  * /etc/security/keytab/nn.service.keytab (on name nodes)
-  * /etc/security/keytab/rm.service.keytab (on resource manager node)
-
-* *authorization* (empty hash by default)
-
-It is recommended also to enable HTTPS when security is enabled. See [Enable HTTPS](#https).
-
-Note: for long-running applications as Spark Streaming jobs you may need to workaround user's delegation tokens a maximum lifetime of 7 days by these properties in *properties* parameter:
+For long-running applications as Spark Streaming jobs you may need to workaround user's delegation tokens a maximum lifetime of 7 days by these properties in *properties* parameter:
 
     'yarn.resourcemanager.proxy-user-privileges.enabled' => true,
     'hadoop.proxyuser.yarn.hosts' => RESOURCE MANAGER HOSTS,
     'hadoop.proxyuser.yarn.groups' => 'hadoop',
 
-Note 2: you can consider removing or changing property *hadoop.security.auth\_to\_local*:
+<a name="auth_to_local"></a>
+#### Auth to local mapping
+
+You can consider changing or even removing property *hadoop.security.auth\_to\_local*:
 
     properties => {
       'hadoop.security.auth_to_local' => '::undef',
     }
 
-Default value is valid for principal names according to Hadoop documentation at [http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-common/SecureMode.html](http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-common/SecureMode.html) and it is needed only with cross-realm authentication.
+Default value is valid for principal names according to Hadoop documentation at [http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-common/SecureMode.html](http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-common/SecureMode.html).
+
+In the default value in cesnet-hadoop module are also mappings for the following Hadoop addons:
+
+* HBase: *hbase/&lt;HOST&gt;@&lt;REALM&gt;* -&gt; *hbase*
+* Hive: *hive/&lt;HOST&gt;@&lt;REALM&gt;* -&gt; *hive*
+* Hue: *hue/&lt;HOST&gt;@&lt;REALM&gt;* -&gt; *hue*
+* Spark: *spark/&lt;HOST&gt;@&lt;REALM&gt;* -&gt; *spark*
+* Zookeeper: *zookeeper/&lt;HOST&gt;@&lt;REALM&gt;* -&gt; *zookeeper*
+* ... and helper principals:
+ * HTTP SPNEGO: *HTTP/&lt;HOST&gt;@&lt;REALM&gt;* -&gt; *HTTP*
+ * Tomcat: *tomcat/&lt;HOST&gt;@&lt;REALM&gt;* -&gt; *tomcat*
+
+*hadoop.security.auth_to_local* is needed and can't be removed if:
+
+* Kerberos principals and local user names are different
+ * they differ in the official documenation: *nn/\_HOST* vs *hdfs*, ...
+ * they are the same in Cloudera documentation: hdfs/\_HOST vs *hdfs*, ...
+* when cross-realm authentication is needed
+* when support for more principals is needed (another Hadoop addon, ...)
 
 <a name="https"></a>
 ###Enable HTTPS
@@ -292,13 +325,13 @@ Consider also checking POSIX ACL support in the system and enable *acl* in Hadoo
 <a name="multihome"></a>
 ###Multihome Support
 
-Multihome support doesn't work out-of-the box in Hadoop 2.6.x (2015-01). Properties and bind hacks to multihome support can be enabled by **multihome => true** in *features*. You will also need to add secondary IPs of datanodes to *datanode_hostnames* or *slaves*:
+Multihome support doesn't work out-of-the box in Hadoop 2.6.x (2015-01). Properties and bind hacks to multihome support can be enabled by **multihome => true** in *features*. You will also need to add secondary IPs of datanodes to *datanode_hostnames* (or *slaves*, which sets *datanode_hostnames* and *nodemanager_hostnames*):
 
     class{"hadoop":
       hdfs_hostname => $::fqdn,
       yarn_hostname => $::fqdn,
       # for multi-home
-      datanode\_hostnames => [ $::fqdn, '10.0.0.2', '192.169.0.2' ],
+      datanode_hostnames => [ $::fqdn, '10.0.0.2', '192.169.0.2' ],
       slaves => [ $::fqdn ],
       frontends => [ $:fqdn ],
       realm => '',
@@ -317,6 +350,140 @@ Multi-home feature enables following properties:
 * 'yarn.resourcemanager.bind-host' => '0.0.0.0'
 * 'dfs.namenode.rpc-bind-host' => '0.0.0.0'
 
+<a name="ha"></a>
+###High Availability
+
+Threre are needed also these daemons for High Availability:
+
+* Secondary Name Node (1) - there will be two Name Node servers
+* Journal Node (>=3) - requires HTTPS, when Kerberos security is enabled
+* Zookeeper/Failover Controller (2) - on each Name Node
+* Zookeeper (>=3)
+
+<a name="ha-fresh"></a>
+#### Fresh installation
+
+Setup High Availability requires precise order of all steps. For example all zookeeper servers must be running before formatting zkfc (class *hadoop::zkfc::service*), or all journal nodes must running during initial formatting (class *hadoop::namenode::config*) or when converting existing cluster to cluster with high availability.
+
+There are helper parameters to separate overall cluster setup to more stages:
+
+1. *zookeeper\_deployed*=**false**, *hdfs\_deployed=***false**: zookeper quorum and journal nodes quorum
+2. *zookeeper\_deployed*=**true**, *hdfs\_deployed=***false**: HDFS format and bootstrap (primary and secondary NN), setup and launch ZKFC and NN daemons
+3. *zookeeper\_deployed*=**true**, *hdfs\_deployed=***true**: enable History Server and RM state-store feature, if enabled
+
+These parameters are not required, the setup should converge when setup is repeated. They may help with debuging problems though, because less things will fail if the setup is separated to several stages over the whole cluster.
+
+**Example**:
+
+    $master1_hostname = 'hadoop-master1.example.com'
+    $master2_hostname = 'hadoop-master2.example.com'
+    $slaves           = ['hadoop1.example.com', 'hadoop2.example.com', ...]
+    $frontends        = ['hadoop.example.com']
+    $quorum_hostnames = [$master1_hostname, $master2_hostname, 'master3.example.com']
+    $cluster_name     = 'example'
+
+    $hdfs_deployed      = true
+    $zookeeper_deployed = true
+
+    class{'hadoop':
+      hdfs_hostname           => $master1_hostname,
+      hdfs_hostname2          => $master2_hostname,
+      yarn_hostname           => $master1_hostname,
+      yarn_hostname2          => $master2_hostname,
+      historyserer_hostnamr   => $master1_hostname,
+      slaves                  => $slaves,
+      frontends               => $frontends,
+      journalnode_hostnames   => $quorum_hostnames,
+      zookeeper_hostnames     => $quorum_hostnames,
+      cluster_name            => $cluster_name,
+      realm                   => '',
+
+      hdfs_deployed           => $hdfs_deployed,
+      zookeeper_deployed      => $zookeeper_deployed,
+    }
+
+    node 'master1.example.com' {
+      include hadoop::namenode
+      include hadoop::resourcemanager
+      include hadoop::historyserver
+      include hadoop::zkfc
+      include hadoop::journalnode
+
+      class{'zookeeper':
+        hostnames => $quorum_hostnames,
+        realm     => '',
+      }
+    }
+
+    node 'master2.example.com' {
+      include hadoop::namenode
+      include hadoop::resourcemanager
+      include hadoop::zkfc
+      include hadoop::journalnode
+
+      class{'zookeeper':
+        hostnames => $quorum_hostnames,
+        realm     => '',
+      }
+    }
+
+    node 'master3.example.com' {
+      include hadoop::journalnode
+
+      class{'zookeeper':
+        hostnames => $quorum_hostnames,
+        realm     => '',
+      }
+    }
+
+    node 'frontend.example.com' {
+      include hadoop::frontend
+      include hadoop::journalnode
+
+      class{'zookeeper':
+        hostnames => $quorum_hostnames,
+        realm     => '',
+      }
+    }
+
+    node /hadoop\d+.example.com/ {
+      include hadoop::datanode
+      include hadoop::nodemanager
+    }
+
+Note: Journalnode and Zookeeper are not resource intensive daemons and can be collocated with other daemons. In this example the content of *master3.example.com* node can be moved to some slave node or the frontend.
+
+<a name="ha-convert"></a>
+#### Converting non-HA cluster
+
+You can use the example above. But you will need to let skip bootstrap **on secondary Name Node before setup**:
+
+    touch /var/lib/hadoop-hdfs/.puppet-hdfs-bootstrapped
+
+And activate HA **on the secondary Name Node after setup** (under *hdfs* user):
+
+    # when kerberos is enabled:
+    #kinit -k -t /etc/security/keytab/nn.ervice.keytab nn/`hostname -f`
+    #
+    hdfs namenode -initializeSharedEdits
+
+<a name="upgrade"></a>
+### Upgrade
+
+The best way is to refresh configrations from the new original (=remove the old) and relaunch puppet on top of it.
+
+For example:
+
+    alternative='cluster'
+    d='hadoop'
+    mv /etc/{d}$/conf.${alternative} /etc/${d}/conf.cdhXXX
+    update-alternatives --auto ${d}-conf
+
+    # upgrade
+    ...
+
+    puppet agent --test
+    #or: puppet apply ...
 
 <a name="reference"></a>
 ##Reference
@@ -383,19 +550,19 @@ Multi-home feature enables following properties:
 ###Resource Types
 
 * **kinit** - Init credentials
-* **kdestroy** - Desteroy credentials
+* **kdestroy** - Destroy credentials
 * **mkdir** - Creates a directory on HDFS
 
 <a name="parameters"></a>
 ###Module Parameters
 
-####`hdfs_hostname` 'localhost'
+####`hdfs_hostname` $::fqdn
 
 Hadoop Filesystem Name Node machine.
 
-####`hdfs_hostname2` 'localhost'
+####`hdfs_hostname2` undef
 
-Another Hadoop Filesystem Name Node machine. used for High Availability. This parameter will activate the HDFS HA feature. See [http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html](http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html).
+Another Hadoop Filesystem Name Node machine. Used for High Availability. This parameter will activate the HDFS HA feature. See [http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html](http://hadoop.apache.org/docs/stable/hadoop-project-dist/hadoop-hdfs/HDFSHighAvailabilityWithQJM.html).
 
 If you're converting existing Hadoop cluster without HA to cluster with HA, you need to initialize journalnodes yet:
 
@@ -403,17 +570,19 @@ If you're converting existing Hadoop cluster without HA to cluster with HA, you 
 
 Zookeepers are required for automatic transitions.
 
-####`yarn_hostname` 'localhost'
+If Hadoop cluster is secured, it is recommended also secure Zookeeper. See *ha_credentials* and *ha_digest* parameters.
+
+####`yarn_hostname` $::fqdn
 
 Yarn machine (with Resource Manager and Job History services).
 
-####`yarn_hostname2` 'localhost'
+####`yarn_hostname2` undef
 
 YARN resourcemanager second hostname for High Availability. This parameter will activate the YARN HA feature. See [http://hadoop.apache.org/docs/stable/hadoop-yarn/hadoop-yarn-site/ResourceManagerHA.html](http://hadoop.apache.org/docs/stable/hadoop-yarn/hadoop-yarn-site/ResourceManagerHA.html).
 
 Zookeepers are required.
 
-####`slaves` 'localhost'
+####`slaves` [$::fqdn]
 
 Array of slave node hostnames.
 
@@ -462,6 +631,18 @@ Array of Zookeeper machines. Used in HDFS namenode HA for automatic failover and
 
 Without zookeepers the manual failover is needed: the namenodes are always started in standby mode and one would need to be activated manually.
 
+####`ha_credentials` undef
+
+With enabled high availability of HDFS in secured cluster it is recommended to secure also zookeeper. The value is in the form *USER:PASSWORD*.
+
+Set this to something like: **hdfs-zkfcs:PASSWORD**.
+
+####`ha_digest` undef
+
+Digest version of *ha_credentials*. You can generate it this way:
+
+     java -cp $ZK_HOME/lib/*:$ZK_HOME/zookeeper-*.jar org.apache.zookeeper.server.auth.DigestAuthenticationProvider hdfs-zkfcs:PASSWORD
+
 ####`hdfs_name_dirs` (["/var/lib/hadoop-hdfs"], or ["/var/lib/hadoop-hdfs/cache"])
 
 Directory prefixes to store the metadata on the namenode.
@@ -498,13 +679,11 @@ Directory prefixes to store journal logs by journal name nodes, if different fro
 
 Descriptions for the properties. Just for cuteness.
 
-####`environments` undef
+####`environment` undef
 
-Environment to set for all Hadoop daemons. Recommended is to increase java heap memory, if enough memory is available:
+Environment to set for all Hadoop daemons.
 
-    environments => ['export HADOOP\_HEAPSIZE=4096', 'export YARN\_HEAPSIZE=4096']
-
-Note: whether to use 'export' or not is system dependent (Debian 7/wheezy: yes, systemd-based distributions: no).
+    environment => {'HADOOP_HEAPSIZE' => 4096, 'YARN_HEAPSIZE' => 4096}
 
 ####`features` (empty)
 
@@ -518,9 +697,16 @@ Note: whether to use 'export' or not is system dependent (Debian 7/wheezy: yes, 
 * **krbrefresh**: use and refresh Kerberos credential cache (MIN HOUR MDAY MONTH WDAY); beware there is a small race-condition during refresh
 * **yellowmanager**: script in /usr/local to start/stop all daemons relevant for given node
 * **multihome**: enable properties required for multihome usage, you will need also add secondary IP addresses to *datanode_hostnames*
-* **aggregation**: enable YARN log aggregation (recommended, YARN will depends on HDFS)
+* **aggregation**: enable YARN log aggregation (recommended, YARN will depend on HDFS)
 
-Recommended features to enable: **rmstore**, **aggregation** and probably **multihome**.
+Recommended features to enable are: **rmstore**, **aggregation** and probably **multihome**.
+
+####`compress_enable` true
+
+Enable compression of intermediate files by snappy codec. This will set following properties:
+
+* *mapred.compress.map.output*: true
+* *mapred.map.output.compression.codec*: "org.apache.hadoop.io.compress.SnappyCodec"
 
 ####`acl` undef
 
@@ -595,7 +781,7 @@ You can use use **limit** rules. For more strict settings you can define *securi
 
     authorization => {
       'rules' => 'limit',
-      'security.service.authorization.default.acl' => ' hadoop,hbase,hive,users',
+      'security.service.authorization.default.acl' => ' hadoop,hbase,hive,spark,users',
     }
 
 Note: Beware *...acl.blocked* are not used if the *....acl* counterpart is defined.
@@ -638,13 +824,21 @@ Certificates keystore key password. If not specified, https\_keystore\_password 
 
 Keytab file for HTTPS. It will be copied for each daemon user and according permissions and properties set.
 
+####`min_uid` (autodetect)
+
+Minimal permitted UID of Hadoop users. Used in Linux containers, when security is enabled.
+
 ####`perform` false
 
 Launch all installation and setup here, from hadoop class.
 
 ####`hdfs_deployed` true
 
-Perform also actions requiring working HDFS (namenode + enough datanodes): enabling RM HDFS state-store feature, and starting MapReduce History Server. This action requires running namenode and datanodes, so you can set this to *false* during initial installation.
+Perform also actions requiring working HDFS (namenode + enough datanodes): enabling RM HDFS state-store feature (if enabled), and starting MapReduce History Server. This action requires running namenode and datanodes, so you can set this to *false* during initial installation.
+
+####`zookeeper_deployed` true
+
+Perform also actions requiring working zookeeper and journal nodes: when enabled, launch ZKFC daemons and secondary namenode. You can set this to *false* during initial installation when High Availability is enabled.
 
 ####`keytab_namenode` '/etc/security/keytab/nn.service.keytab'
 
@@ -677,13 +871,6 @@ Keytab file for YARN Node Manager. This will set also property *yarn.nodemanager
 Idea in this module is to do only one thing - setup Hadoop cluster - and not limit generic usage of this module by doing other stuff. You can have your own repository with Hadoop SW, you can use this module just by *puppet apply*. You can select which Kerberos implementation or Java version to use.
 
 On other hand this leads to some limitations as mentioned in [Setup Requirements](#setup-requirements) section and you may need site-specific puppet module together with this one.
-
-Initial installation of high availability is not well supported in this module, as it requires fine orchestration and synchronization between nodes. It is better to install cluster without HA features first, then copy HDFS Name Node data to secondary Name Node, then enable HA features and launch *hdfs namenode -initializeSharedEdits*.
-
-Also Puppet 3.x and Ruby >= 1.9.x is required. So following systems are not supported:
-
-* RedHat/CentOS 6 and older
-* Ubuntu 12/precise and older
 
 <a name="development"></a>
 ##Development
